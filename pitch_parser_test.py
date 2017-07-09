@@ -1,11 +1,9 @@
 import unittest
 
-from parser import Order, PitchParser 
+from PitchParser import Order, PitchParser 
 
 class PitchParserTest(unittest.TestCase):
     def setUp(self):
-        #test_data_file = 'pitch_test_data.txt'
-
         self.parser = PitchParser()
     
         self.sample_add_order_msg = '28800162A1K27GA00000VB001234AAPL  0001828600Y'
@@ -20,6 +18,7 @@ class PitchParserTest(unittest.TestCase):
         )
 
         self.sample_execute_order_msg = '28884189E1K27GA00000V001234'
+        self.sample_cancel_order_msg = '28866828X1K27GA00000V001234'
 
     def test_order_id_parsing(self):
         parsed_order_id = self.parser.get_order_id_from_msg(self.sample_add_order_msg)
@@ -67,6 +66,29 @@ class PitchParserTest(unittest.TestCase):
         self.assertEqual(len(self.parser.open_orders), expected_num_open_orders)
         
         self.assertEqual(len(self.parser.executed_orders), expected_num_executed_orders)
+        self.assertEqual(self.parser.executed_orders, expected_executed_dict)
+
+    def test_cancel_order_processing(self):
+        expected_num_open_orders = 0
+        expected_num_executed_orders = 0
+
+        # add an order and then cancel it
+        self.parser.process_msg(self.sample_add_order_msg)
+        self.parser.process_msg(self.sample_cancel_order_msg)
+
+        self.assertEqual(len(self.parser.open_orders), expected_num_open_orders)
+        self.assertEqual(len(self.parser.executed_orders), expected_num_executed_orders)
+
+class PitchParserDummyDataTest(unittest.TestCase):
+    def setUp(self):
+        test_data_file = 'pitch_dummy_data'
+        self.parser = PitchParser(test_data_file)
+
+    def test_parser(self):
+        expected_executed_dict = {'AAPL': 295}
+
+        self.parser.parse()
+
         self.assertEqual(self.parser.executed_orders, expected_executed_dict)
 
 if __name__ == '__main__':
