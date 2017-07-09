@@ -9,6 +9,11 @@ class Order():
         self.stock_symbol = stock_symbol
         self.quantity = quantity
 
+    def __eq__(self, other):
+        return self.order_id == other.order_id and \
+            self.stock_symbol == other.stock_symbol and \
+            self.quantity == other.quantity 
+
 
 class PitchParser():
 
@@ -25,6 +30,12 @@ class PitchParser():
 
         return self.splice_msg(msg, ORDER_ID_OFFSET, ORDER_ID_LEN)
 
+    def get_order_type_char_from_msg(self, msg):
+        ORDER_TYPE_OFFSET = 8
+        ORDER_TYPE_LEN = 1
+
+        return self.splice_msg(msg, ORDER_TYPE_OFFSET, ORDER_TYPE_LEN)
+
     def get_quantity_from_msg(self, msg):
         QUANTITY_OFFSET = 22
         QUANTITY_LEN = 6
@@ -38,20 +49,19 @@ class PitchParser():
         return self.splice_msg(msg, STOCK_SYMBOL_OFFSET, STOCK_SYMBOL_LEN).rstrip()        
 
     def get_order_obj(self, msg, order_id):
-
         stock_symbol = self.get_stock_symbol_from_msg(msg)
-        quantity = self.splice_msg(QUANTITY_OFFSET, QUANTITY_LEN)
+        quantity = self.get_quantity_from_msg(msg)
 
         return Order(order_id, stock_symbol, quantity)
 
-    def is_msg_an_add_order(self, order_type_char):
-        return order_type_char == 'A'
+    def is_msg_an_add_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'A'
 
-    def is_msg_a_cancel_order(self, order_type_char):
-        return order_type_char == 'X'
+    def is_msg_a_cancel_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'X'
 
-    def is_msg_an_exec_order(self, order_type_char):
-        return order_type_char == 'E'
+    def is_msg_an_exec_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'E'
 
     def parse(self):
         with open(self.file, 'r') as f:    
@@ -73,13 +83,13 @@ class PitchParser():
 
         # if msg is an add order, add it to dict of open orders
         if self.is_msg_an_add_order(order_str):
-            self.open_orders[order_id] = self.get_order_obj(msg, order_id)
+            self.open_orders[order_id] = self.get_order_obj(order_str, order_id)
         
         # if it's and execution order, remove it from dict of open orders,
         # and record the volume executed
         elif self.is_msg_an_exec_order(order_str):
             try:
-                order = open_orders.pop(order_id)
+                order = self.open_orders.pop(order_id)
                 self.executed_orders[order.stock_symbol] += order.quantity 
             except KeyError:
                 print 'An execute order (%s) has no corresponding add order.' % str(order_id)
@@ -87,7 +97,7 @@ class PitchParser():
         # if it's a cancel order, simply remove it from dict of open orders
         elif self.is_msg_a_cancel_order(order_str):
             try:
-                order = open_orders.pop(order_id)
+                order = self.open_orders.pop(order_id)
             except KeyError:
                 print 'A cancel order (%s) has no corresponding add order.' % str(order_id)
       
