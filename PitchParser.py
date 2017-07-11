@@ -1,19 +1,8 @@
-import os
+import os, sys
 
 from collections import defaultdict
 
-class Order():
-    ''' Encapsulates order information. Currently used only for Add Orders. '''
-
-    def __init__(self, order_id, stock_symbol=None, quantity=None):
-        self.order_id = order_id
-        self.stock_symbol = stock_symbol
-        self.quantity = quantity
-
-    def __eq__(self, other):
-        return self.order_id == other.order_id and \
-            self.stock_symbol == other.stock_symbol and \
-            self.quantity == other.quantity 
+from Order import Order
 
 
 class PitchParser():
@@ -35,6 +24,21 @@ class PitchParser():
         self.executed_orders = defaultdict(int)
 
 
+    # methods for determining message type
+
+    def is_msg_an_add_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'A'
+
+    def is_msg_a_cancel_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'X'
+
+    def is_msg_an_exec_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'E'
+
+    def is_msg_a_trade_order(self, msg):
+        return self.get_order_type_char_from_msg(msg) == 'P'
+
+
     # methods for parsing the messages, per the spec
 
     def get_order_id_from_msg(self, msg):
@@ -54,6 +58,9 @@ class PitchParser():
         QUANTITY_LEN = 6
 
         return int(self.splice_msg(msg, QUANTITY_OFFSET, QUANTITY_LEN))
+
+    def get_quantity_from_cancel_msg(self, msg):
+        return self.get_quantity_from_exec_msg(msg)
 
     def get_quantity_from_exec_msg(self, msg):
         QUANTITY_OFFSET = 21
@@ -81,22 +88,6 @@ class PitchParser():
     def splice_msg(self, msg, offset, msg_len):
         return msg[offset : offset + msg_len]
 
-
-    # methods for determining message type
-
-    def is_msg_an_add_order(self, msg):
-        return self.get_order_type_char_from_msg(msg) == 'A'
-
-    def is_msg_a_cancel_order(self, msg):
-        return self.get_order_type_char_from_msg(msg) == 'X'
-
-    def is_msg_an_exec_order(self, msg):
-        return self.get_order_type_char_from_msg(msg) == 'E'
-
-    def is_msg_a_trade_order(self, msg):
-        return self.get_order_type_char_from_msg(msg) == 'P'
-
-
     def parse(self):
         ''' Reads a file containing messages, processing each line. '''
 
@@ -113,52 +104,102 @@ class PitchParser():
                 else:
                     break
 
+
+    # methods for processing the messages. TODO: Move these to a new class.
+
+    def decrement_order_quantity(self, order, amt):
+        ''' Updates an order quantity, removing the order from the
+            dict of open orders if it is wholly executed or cancelled. 
+        '''
+
+        order.quantity -= amt
+
+        if order.quantity > 0:
+            self.open_orders[order.order_id] = order
+
+    def process_add_order(self, order_id, msg):
+        self.open_orders[order_id] = self.get_order_obj(msg, order_id)
+
+    def process_cancel_order(self, order_id, msg):
+        ''' Updates the order according to number of shares cancelled. '''
+
+        try:
+            order = self.open_orders.pop(order_id)
+            shares_cancelled = self.get_quantity_from_cancel_msg(msg)
+
+            self.decrement_order_quantity(order, shares_cancelled)
+        except KeyError:
+            pass
+
+    def process_execute_order(self, order_id, msg):
+        ''' Records the executed volume and updates open orders according to whether 
+            the trade was executed in whole or in part.
+        '''
+
+        try:
+            order = self.open_orders.pop(order_id)
+            actual_shares_traded = self.get_quantity_from_exec_msg(msg)
+
+            self.decrement_order_quantity(order, actual_shares_traded)
+
+            self.executed_orders[order.stock_symbol] += actual_shares_traded
+        except KeyError:
+            pass
+
+    def process_trade_order(self, order_id, msg):
+        ''' Record the executed volume. There is no corresponding add order. '''
+
+        ticker = self.get_stock_symbol_from_msg(msg)
+        quantity = self.get_quantity_from_trade_msg(msg)
+
+        self.executed_orders[ticker] += quantity
+
     def process_msg(self, order_str):
         ''' Tracks order executions. '''
 
         # all messages have an order_id
         order_id = self.get_order_id_from_msg(order_str)
 
-        # if msg is an add order, add it to dict of open orders
         if self.is_msg_an_add_order(order_str):
-            self.open_orders[order_id] = self.get_order_obj(order_str, order_id)
-        
-        # if it's an execution order, remove it from dict of open orders, and record the volume executed
+            self.process_add_order(order_id, order_str)
+
         elif self.is_msg_an_exec_order(order_str):
-            try:
-                order = self.open_orders.pop(order_id)
-                actual_shares_traded = self.get_quantity_from_exec_msg(order_str)
+            self.process_execute_order(order_id, order_str)
 
-                self.executed_orders[order.stock_symbol] += actual_shares_traded
-            except KeyError:
-                pass
-
-        # if it's a trade order, record the volume executed (there is no corresponding add order)
-        elif self.is_msg_a_trade_order(order_str):
-            ticker = self.get_stock_symbol_from_msg(order_str)
-            quantity = self.get_quantity_from_trade_msg(order_str)
-
-            self.executed_orders[ticker] += quantity
-
-        # if it's a cancel order, simply remove the order from dict of open orders, if it exists
         elif self.is_msg_a_cancel_order(order_str):    
-            order = self.open_orders.pop(order_id, None)
-      
-        # otherwise, ignore the message
+            self.process_cancel_order(order_id, order_str)
+
+        elif self.is_msg_a_trade_order(order_str):
+            self.process_trade_order(order_id, order_str)
+
         else:
             pass
+
+
+    # methods for outputting results
 
     def print_total_volume(self):
         ''' Output trade volumes to stdout. '''
 
         TICKER_MAX_LEN = 8 
 
-        for ticker, quantity in sorted(self.executed_orders.items(), key=lambda k: k[1], reverse=True)[:10]:
+        for ticker, quantity in self.sort_by_volume(self.executed_orders)[:10]:
             print ticker.ljust(TICKER_MAX_LEN), quantity 
+
+    def sort_by_volume(self, executed_orders):
+        ''' Sorts executed trades by volume. '''
+
+        return sorted(executed_orders.items(), key=lambda k: k[1], reverse=True)
 
 
 if __name__ == '__main__':
+    try:
+        data_file = sys.argv[1]
+    except IndexError:
+        print('Usage: challenge_2.py data_file')
+        sys.exit(-1)
 
-    parser = PitchParser('pitch_example_data')
+
+    parser = PitchParser(data_file)
     parser.parse()
     parser.print_total_volume()

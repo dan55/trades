@@ -1,9 +1,10 @@
-import unittest
+import os, unittest
 
 from PitchParser import Order, PitchParser 
 
+
 class PitchParserTest(unittest.TestCase):
-    ''' Tests basic functionality using data specified in setUp '''
+    ''' Tests basic functionality using data specified in setUp. '''
 
     def setUp(self):
         self.parser = PitchParser()
@@ -88,10 +89,11 @@ class PitchParserTest(unittest.TestCase):
 
 
 class PitchParserDummyDataTest(unittest.TestCase):
-    ''' Tests the parser using a data file, which is a subset of the example data '''
+    ''' Tests the parser using a data file, which is a subset of the example data. '''
 
     def setUp(self):
-        test_data_file = 'pitch_dummy_data'
+        test_data_file = os.path.join(os.path.dirname(__file__), 'pitch_dummy_data')
+
         self.parser = PitchParser(test_data_file)
 
     def test_parser(self):
